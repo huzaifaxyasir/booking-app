@@ -3,7 +3,6 @@
     <div class="card">
       <header class="header">
         <h1>🧡 Book Your Appointment</h1>
-        
       </header>
 
       <div class="progress">
@@ -13,6 +12,12 @@
         <div :class="['step', currentState === 'confirmed' ? 'active' : '']">Done</div>
       </div>
 
+      <!-- Debug info -->
+      <div style="background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px;">
+        <strong>Debug:</strong> Current state: {{ currentState }} | Actor exists: {{ !!actor }}
+        <button @click="debugLog" style="margin-left: 10px; padding: 2px 8px;">Log Debug Info</button>
+      </div>
+
       <transition name="fade-slide">
         <div class="content" :key="currentState">
           <p class="state-label">Current state: <strong>{{ currentState }}</strong></p>
@@ -20,7 +25,7 @@
           <!-- Idle -->
           <div v-if="currentState === 'idle'">
             <p>Welcome! Click below to begin your booking.</p>
-            <button class="btn primary" @click="send({ type: 'START' })">Start Booking</button>
+            <button class="btn primary" @click="handleStart">Start Booking</button>
           </div>
 
           <!-- Selecting -->
@@ -105,12 +110,13 @@
 </template>
 
 <script>
-import { ref, onMounted, computed } from 'vue'
-import { createMachine, interpret } from 'xstate'
+import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { createMachine, createActor } from 'xstate'
 
 export default {
   setup() {
     const currentState = ref('idle')
+    const actor = ref(null)
   
     const form = ref({
       name: '',
@@ -124,13 +130,18 @@ export default {
 
     const bookedEmails = ref(new Set())
     const errorMessage = ref('')
-    let service
+    const theme = ref('light')
 
+    // XState v5 machine definition
     const bookingMachine = createMachine({
       id: 'booking',
       initial: 'idle',
       states: {
-        idle: { on: { START: 'selecting' } },
+        idle: { 
+          on: { 
+            START: 'selecting' 
+          } 
+        },
         selecting: {
           on: {
             NEXT: 'confirming',
@@ -150,19 +161,44 @@ export default {
     })
 
     const startMachine = () => {
-      service = interpret(bookingMachine)
-        .onTransition((state) => {
-          currentState.value = state.value
-        })
-        .start()
+      console.log('Starting machine...')
+      
+      // Stop existing actor if any
+      if (actor.value) {
+        actor.value.stop()
+      }
+      
+      // Create new actor
+      actor.value = createActor(bookingMachine)
+      
+      // Subscribe to state changes
+      actor.value.subscribe((state) => {
+        console.log('State changed to:', state.value)
+        currentState.value = state.value
+      })
+      
+      // Start the actor
+      actor.value.start()
+      console.log('Machine started, initial state:', actor.value.getSnapshot().value)
     }
 
     onMounted(() => {
       startMachine()
     })
 
+    onUnmounted(() => {
+      if (actor.value) {
+        actor.value.stop()
+      }
+    })
+
     const send = (event) => {
-      if (!service) return
+      console.log('Sending event:', event)
+      
+      if (!actor.value) {
+        console.error('Actor not initialized!')
+        return
+      }
 
       if (event.type === 'CONFIRM') {
         const email = form.value.email.trim().toLowerCase()
@@ -175,7 +211,23 @@ export default {
         }
       }
 
-      service.send(event)
+      actor.value.send(event)
+    }
+
+    const handleStart = () => {
+      console.log('Start button clicked!')
+      send({ type: 'START' })
+    }
+
+    const debugLog = () => {
+      console.log('=== DEBUG INFO ===')
+      console.log('currentState:', currentState.value)
+      console.log('actor exists:', !!actor.value)
+      if (actor.value) {
+        console.log('actor snapshot:', actor.value.getSnapshot())
+        console.log('actor state value:', actor.value.getSnapshot().value)
+      }
+      console.log('==================')
     }
 
     const reset = () => {
@@ -189,7 +241,6 @@ export default {
         notes: ''
       }
       errorMessage.value = ''
-      currentState.value = 'idle'
       startMachine()
     }
 
@@ -202,15 +253,17 @@ export default {
       currentState,
       form,
       send,
+      handleStart,
+      debugLog,
       reset,
       isFormValid,
       errorMessage,
-      
+      theme,
+      actor: computed(() => actor.value)
     }
   }
 }
 </script>
-
 
 <style scoped>
 .app {
